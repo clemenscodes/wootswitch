@@ -13,10 +13,6 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Output Waybar-compatible JSON instead of plain text
-    #[arg(short, long)]
-    waybar: bool,
-
     /// Print only the current profile name (plain text, for scripts)
     #[arg(short, long)]
     current: bool,
@@ -25,7 +21,11 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     /// List all profiles with the active one marked (default)
-    List,
+    List {
+        /// Output Waybar-compatible JSON instead of plain text
+        #[arg(short, long)]
+        waybar: bool,
+    },
     /// Switch to profile N (1-based)
     Switch {
         /// Profile number (1-based)
@@ -89,12 +89,24 @@ fn main() -> Result<()> {
             let switched = keyboard.switch_prev()?;
             println!("switched to {switched}");
         }
-        Some(Command::List) | None => {
+        Some(Command::List { waybar }) => {
             let listing = keyboard.profiles()?;
-            if args.waybar {
+            if waybar {
                 let output = waybar_output(&listing);
                 println!("{}", to_string_pretty(&output)?);
-            } else if args.current {
+            } else {
+                for profile in listing.profiles() {
+                    if profile.is_current() {
+                        println!("* {profile} (current)");
+                    } else {
+                        println!("  {profile}");
+                    }
+                }
+            }
+        }
+        None => {
+            let listing = keyboard.profiles()?;
+            if args.current {
                 let current = listing.profiles().iter().find(|p| p.is_current());
                 match current {
                     Some(profile) => println!("{}", profile.name()),
