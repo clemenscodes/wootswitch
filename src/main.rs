@@ -2,13 +2,20 @@ mod keyboard;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use keyboard::{Keyboard, ProfileNumber};
+use serde::Serialize;
+use serde_json::to_string_pretty;
+
+use keyboard::{Keyboard, ProfileListing, ProfileNumber};
 
 #[derive(Parser)]
 #[command(name = "wootswitch", about = "Wooting keyboard profile switcher")]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
+
+    /// Output Waybar-compatible JSON instead of plain text
+    #[arg(short, long)]
+    waybar: bool,
 
     /// Print only the current profile name (plain text, for scripts)
     #[arg(short, long)]
@@ -28,6 +35,40 @@ enum Command {
     Next,
     /// Switch to the previous profile (wraps around)
     Prev,
+}
+
+/// Waybar custom module output format.
+///
+/// Waybar reads this when `return-type = "json"` is set on the module.
+/// `text` is shown in the bar; `tooltip` on hover; `class` enables CSS styling.
+#[derive(Serialize)]
+struct WaybarOutput {
+    text: String,
+    tooltip: String,
+    class: String,
+    alt: String,
+}
+
+fn waybar_output(listing: &ProfileListing) -> WaybarOutput {
+    let current = listing.profiles().iter().find(|p| p.is_current());
+    let text = current.map(|p| p.name().to_string()).unwrap_or_default();
+    let class = current
+        .map(|p| format!("profile-{}", p.number()))
+        .unwrap_or_else(|| "profile-unknown".to_string());
+    let tooltip = listing
+        .profiles()
+        .iter()
+        .map(|p| {
+            if p.is_current() {
+                format!("* {p} (current)")
+            } else {
+                format!("  {p}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let alt = text.clone();
+    WaybarOutput { text, tooltip, class, alt }
 }
 
 fn main() -> Result<()> {
@@ -50,7 +91,10 @@ fn main() -> Result<()> {
         }
         Some(Command::List) | None => {
             let listing = keyboard.profiles()?;
-            if args.current {
+            if args.waybar {
+                let output = waybar_output(&listing);
+                println!("{}", to_string_pretty(&output)?);
+            } else if args.current {
                 let current = listing.profiles().iter().find(|p| p.is_current());
                 match current {
                     Some(profile) => println!("{}", profile.name()),

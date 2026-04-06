@@ -8,12 +8,13 @@ A Rust CLI for switching Wooting keyboard profiles directly via HID — no Wooti
 wootswitch [OPTIONS] [COMMAND]
 
 Commands:
-  list         List all profiles with the active one marked [default]
+  list         List all profiles with the active one marked (default)
   switch <N>   Switch to profile N (1-based)
   next         Switch to the next profile (wraps around)
   prev         Switch to the previous profile (wraps around)
 
 Options:
+  -w, --waybar    Output Waybar-compatible JSON instead of plain text
   -c, --current   Print only the current profile name (plain text, for scripts)
   -h, --help      Print help
 ```
@@ -43,8 +44,8 @@ wootswitch --current
 ```
 * Profile 1 — Coding (current)
   Profile 2 — CS2
-  Profile 3 — Media
-  Profile 4 — Gaming
+  Profile 3 — Gaming
+  Profile 4 — Streaming
 ```
 
 ## Supported devices
@@ -97,16 +98,35 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 
 ## Waybar module
 
-Add to your Waybar config:
-
 ```json
 "custom/wootswitch": {
-    "exec": "wootswitch --current",
+    "exec": "wootswitch --waybar",
+    "return-type": "json",
     "interval": 5,
     "on-click": "wootswitch next",
     "on-click-right": "wootswitch prev",
     "format": " {}"
 }
+```
+
+`wootswitch --waybar` output:
+
+```json
+{
+  "text": "Coding",
+  "tooltip": "* Profile 1 — Coding (current)\n  Profile 2 — CS2\n  Profile 3 — Gaming\n  Profile 4 — Streaming",
+  "class": "profile-1",
+  "alt": "Coding"
+}
+```
+
+Style by profile in `style.css`:
+
+```css
+#custom-wootswitch.profile-1 { color: #ff6b6b; }
+#custom-wootswitch.profile-2 { color: #a8e6cf; }
+#custom-wootswitch.profile-3 { color: #ffd3a5; }
+#custom-wootswitch.profile-4 { color: #c3a6ff; }
 ```
 
 
