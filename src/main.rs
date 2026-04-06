@@ -1,11 +1,11 @@
 mod keyboard;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use hidapi::HidApi;
-use serde_json::{json, to_string_pretty};
+use serde::Serialize;
+use serde_json::to_string_pretty;
 
-use keyboard::{Keyboard, ProfileListing, ProfileNumber};
+use keyboard::{Keyboard, Profile, ProfileListing, ProfileNumber};
 
 #[derive(Parser)]
 #[command(name = "wootswitch", about = "Wooting keyboard profile switcher")]
@@ -21,7 +21,7 @@ struct Args {
     #[arg(short = 'D', long)]
     list_devices: bool,
 
-    /// Output as JSON
+    /// Output as Waybar-compatible JSON
     #[arg(short, long)]
     json: bool,
 }
@@ -33,6 +33,48 @@ enum Command {
         /// Profile number (1-based)
         profile: u8,
     },
+}
+
+/// Waybar custom module output format.
+///
+/// Waybar reads this when `return-type = "json"` is set on the module.
+/// `text` is shown in the bar; `tooltip` on hover; `class` enables CSS styling.
+#[derive(Serialize)]
+struct WaybarOutput {
+    text: String,
+    tooltip: String,
+    class: String,
+    alt: String,
+}
+
+fn waybar_from_listing(listing: &ProfileListing) -> WaybarOutput {
+    let current_profile = listing.profiles().iter().find(|p| p.is_current());
+    let text = current_profile.map(|p| p.name().to_string()).unwrap_or_default();
+    let class = current_profile
+        .map(|p| format!("profile-{}", p.number()))
+        .unwrap_or_else(|| "profile-unknown".to_string());
+    let tooltip = listing
+        .profiles()
+        .iter()
+        .map(|p| {
+            if p.is_current() {
+                format!("* {p} (current)")
+            } else {
+                format!("  {p}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let alt = text.clone();
+    WaybarOutput { text, tooltip, class, alt }
+}
+
+fn waybar_from_profile(profile: &Profile) -> WaybarOutput {
+    let text = profile.name().to_string();
+    let class = format!("profile-{}", profile.number());
+    let tooltip = format!("{profile}");
+    let alt = text.clone();
+    WaybarOutput { text, tooltip, class, alt }
 }
 
 fn print_listing(listing: &ProfileListing) {
@@ -47,7 +89,7 @@ fn print_listing(listing: &ProfileListing) {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let api = HidApi::new().context("Failed to initialise HID API")?;
+    let api = hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
 
     if args.list_devices {
         Keyboard::list_all_devices(&api);
@@ -58,7 +100,8 @@ fn main() -> Result<()> {
         let keyboard = Keyboard::find(&api)?;
         let switched = keyboard.switch_to(ProfileNumber::from(profile))?;
         if args.json {
-            println!("{}", json!({ "switched_to": profile }));
+            let output = waybar_from_profile(&switched);
+            println!("{}", to_string_pretty(&output)?);
         } else {
             println!("{keyboard}: switched to {switched}");
         }
@@ -68,19 +111,24 @@ fn main() -> Result<()> {
     let keyboard = Keyboard::find(&api)?;
 
     if args.current {
-        let active = keyboard.active_profile().ok();
-        match (active, args.json) {
-            (Some(number), true) => println!("{}", json!({ "current": number })),
-            (Some(number), false) => println!("{number}"),
-            (None, true) => println!("{}", json!({ "current": null })),
-            (None, false) => bail!("Could not read current profile from keyboard"),
+        if args.json {
+            let listing = keyboard.profiles()?;
+            let output = waybar_from_listing(&listing);
+            println!("{}", to_string_pretty(&output)?);
+        } else {
+            let active = keyboard.active_profile().ok();
+            match active {
+                Some(number) => println!("{number}"),
+                None => bail!("Could not read current profile from keyboard"),
+            }
         }
         return Ok(());
     }
 
     let listing = keyboard.profiles()?;
     if args.json {
-        println!("{}", to_string_pretty(&listing)?);
+        let output = waybar_from_listing(&listing);
+        println!("{}", to_string_pretty(&output)?);
     } else {
         println!("{keyboard}");
         print_listing(&listing);

@@ -109,6 +109,43 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="31e3", TAG+="uaccess"
 
 Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 
+## Waybar module
+
+All `--json` output follows the Waybar custom module format — `text` (bar display),
+`tooltip` (hover), `class` (CSS), and `alt`.
+
+Add to your Waybar config:
+
+```json
+"custom/wootswitch": {
+    "exec": "wootswitch --current --json",
+    "return-type": "json",
+    "interval": 5,
+    "on-click": "wootswitch switch 1",
+    "on-click-right": "wootswitch switch 2",
+    "format": " {}"
+}
+```
+
+Example output of `wootswitch --current --json`:
+
+```json
+{
+  "text": "Office",
+  "tooltip": "  Profile 1 — Gaming\n* Profile 2 — Office (current)\n  Profile 3 — Media",
+  "class": "profile-2",
+  "alt": "Office"
+}
+```
+
+Style by profile in `style.css`:
+
+```css
+#custom-wootswitch.profile-1 { color: #ff6b6b; }
+#custom-wootswitch.profile-2 { color: #a8e6cf; }
+#custom-wootswitch.profile-3 { color: #ffd3a5; }
+```
+
 ## Protocol
 
 See [`docs/hid-protocol.md`](docs/hid-protocol.md) for a full account of the reverse-engineered
