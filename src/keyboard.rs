@@ -1,6 +1,6 @@
 use std::{fmt, thread, time::Duration};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use hidapi::HidApi;
 use serde::Serialize;
 
@@ -234,12 +234,18 @@ impl From<u8> for ProfileNumber {
 impl ProfileNumber {
     /// Returns the next profile, wrapping from the last back to the first.
     pub fn wrapping_next(self, count: u8) -> ProfileNumber {
-        ProfileNumber { number: (self.number % count) + 1 }
+        ProfileNumber {
+            number: (self.number % count) + 1,
+        }
     }
 
     /// Returns the previous profile, wrapping from the first back to the last.
     pub fn wrapping_prev(self, count: u8) -> ProfileNumber {
-        let number = if self.number == 1 { count } else { self.number - 1 };
+        let number = if self.number == 1 {
+            count
+        } else {
+            self.number - 1
+        };
         ProfileNumber { number }
     }
 }
@@ -528,5 +534,4 @@ impl Keyboard {
         let current = self.active_profile()?;
         self.switch_to(current.wrapping_prev(count))
     }
-
 }

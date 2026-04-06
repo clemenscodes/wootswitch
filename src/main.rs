@@ -1,6 +1,6 @@
 mod keyboard;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::to_string_pretty;
@@ -71,16 +71,26 @@ fn waybar_output(listing: &ProfileListing) -> WaybarOutput {
         .collect::<Vec<_>>()
         .join("\n");
     let alt = text.clone();
-    WaybarOutput { text, tooltip, class, alt }
+    WaybarOutput {
+        text,
+        tooltip,
+        class,
+        alt,
+    }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let api = hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
+    let api =
+        hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
     let keyboard = Keyboard::find(&api)?;
 
     match args.command {
-        Some(Command::Switch { profile, next, previous }) => {
+        Some(Command::Switch {
+            profile,
+            next,
+            previous,
+        }) => {
             let switched = if next {
                 keyboard.switch_next()?
             } else if previous {
