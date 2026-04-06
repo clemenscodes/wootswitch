@@ -9,56 +9,32 @@ wootswitch [OPTIONS] [COMMAND]
 
 Commands:
   switch <N>   Switch to profile N (1-based)
+  next         Switch to the next profile (wraps around)
+  prev         Switch to the previous profile (wraps around)
 
 Options:
-  -c, --current       Print only the current profile number
-  -D, --list-devices  List all detected Wooting HID interfaces (for debugging)
-  -j, --json          Output as JSON
-  -h, --help          Print help
+  -c, --current   Print only the current profile name (plain text, for scripts)
+  -h, --help      Print help
 ```
+
+All commands output Waybar-compatible JSON by default. Use `--current` to get just the
+profile name as plain text.
 
 ### Examples
 
 ```sh
-# List all profiles with the active one marked
+# Waybar JSON — current profile with full tooltip
 wootswitch
 
-# Switch to profile 2
+# Switch to profile 2 — outputs Waybar JSON for the new state
 wootswitch switch 2
 
-# Print the current profile number
+# Cycle profiles from a keybind
+wootswitch next
+wootswitch prev
+
+# Plain text profile name for scripts
 wootswitch --current
-
-# JSON output (useful for scripting and status bars)
-wootswitch --json
-wootswitch --current --json
-```
-
-### JSON output
-
-`wootswitch --json` outputs the full profile listing:
-
-```json
-{
-  "profiles": [
-    { "number": 1, "current": false, "name": "Gaming" },
-    { "number": 2, "current": true,  "name": "Office" },
-    { "number": 3, "current": false, "name": "Media" }
-  ],
-  "current": 2
-}
-```
-
-`wootswitch switch 2 --json` outputs:
-
-```json
-{ "switched_to": 2 }
-```
-
-`wootswitch --current --json` outputs:
-
-```json
-{ "current": 2 }
 ```
 
 ## Supported devices
@@ -118,11 +94,11 @@ Add to your Waybar config:
 
 ```json
 "custom/wootswitch": {
-    "exec": "wootswitch --current --json",
+    "exec": "wootswitch",
     "return-type": "json",
     "interval": 5,
-    "on-click": "wootswitch switch 1",
-    "on-click-right": "wootswitch switch 2",
+    "on-click": "wootswitch next",
+    "on-click-right": "wootswitch prev",
     "format": " {}"
 }
 ```
@@ -144,6 +120,7 @@ Style by profile in `style.css`:
 #custom-wootswitch.profile-1 { color: #ff6b6b; }
 #custom-wootswitch.profile-2 { color: #a8e6cf; }
 #custom-wootswitch.profile-3 { color: #ffd3a5; }
+#custom-wootswitch.profile-4 { color: #c3a6ff; }
 ```
 
 ## Protocol

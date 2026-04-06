@@ -231,6 +231,19 @@ impl From<u8> for ProfileNumber {
     }
 }
 
+impl ProfileNumber {
+    /// Returns the next profile, wrapping from the last back to the first.
+    pub fn wrapping_next(self, count: u8) -> ProfileNumber {
+        ProfileNumber { number: (self.number % count) + 1 }
+    }
+
+    /// Returns the previous profile, wrapping from the first back to the last.
+    pub fn wrapping_prev(self, count: u8) -> ProfileNumber {
+        let number = if self.number == 1 { count } else { self.number - 1 };
+        ProfileNumber { number }
+    }
+}
+
 impl From<ProfileIndex> for ProfileNumber {
     fn from(index: ProfileIndex) -> Self {
         ProfileNumber {
@@ -502,32 +515,18 @@ impl Keyboard {
         Ok(switched)
     }
 
-    /// Print all Wooting HID interfaces to stdout (for debugging).
-    pub fn list_all_devices(api: &HidApi) {
-        println!("Wooting HID interfaces (VID {WOOTING_VID:#06x}):");
-        let devices: Vec<_> = api
-            .device_list()
-            .filter(|device| device.vendor_id() == WOOTING_VID)
-            .collect();
-
-        if devices.is_empty() {
-            println!("  (none found)");
-            return;
-        }
-
-        for device in devices {
-            let model = device.product_string().unwrap_or("Unknown");
-            let path = device.path().to_string_lossy();
-            let role = match Protocol::try_from(device.usage_page()) {
-                Ok(Protocol::Standard) => " ← config",
-                Ok(Protocol::Arm) => " ← config (ARM)",
-                Err(()) => "",
-            };
-            println!(
-                "  {model}  PID={:#06x}  usage_page={:#06x}{role}  @ {path}",
-                device.product_id(),
-                device.usage_page(),
-            );
-        }
+    /// Switch to the next profile, wrapping from the last back to the first.
+    pub fn switch_next(&self) -> Result<Profile> {
+        let count = self.profile_count()?;
+        let current = self.active_profile()?;
+        self.switch_to(current.wrapping_next(count))
     }
+
+    /// Switch to the previous profile, wrapping from the first back to the last.
+    pub fn switch_prev(&self) -> Result<Profile> {
+        let count = self.profile_count()?;
+        let current = self.active_profile()?;
+        self.switch_to(current.wrapping_prev(count))
+    }
+
 }

@@ -13,17 +13,9 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Print only the current profile number (1-based)
+    /// Print only the current profile name (plain text, for scripts)
     #[arg(short, long)]
     current: bool,
-
-    /// List all detected Wooting HID interfaces (for debugging)
-    #[arg(short = 'D', long)]
-    list_devices: bool,
-
-    /// Output as Waybar-compatible JSON
-    #[arg(short, long)]
-    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -33,6 +25,10 @@ enum Command {
         /// Profile number (1-based)
         profile: u8,
     },
+    /// Switch to the next profile (wraps around)
+    Next,
+    /// Switch to the previous profile (wraps around)
+    Prev,
 }
 
 /// Waybar custom module output format.
@@ -77,61 +73,45 @@ fn waybar_from_profile(profile: &Profile) -> WaybarOutput {
     WaybarOutput { text, tooltip, class, alt }
 }
 
-fn print_listing(listing: &ProfileListing) {
-    for profile in listing.profiles() {
-        if profile.is_current() {
-            println!("  * {profile} (current)");
-        } else {
-            println!("    {profile}");
-        }
-    }
+fn print_json(output: &WaybarOutput) -> Result<()> {
+    println!("{}", to_string_pretty(output)?);
+    Ok(())
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let api = hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
-
-    if args.list_devices {
-        Keyboard::list_all_devices(&api);
-        return Ok(());
-    }
-
-    if let Some(Command::Switch { profile }) = args.command {
-        let keyboard = Keyboard::find(&api)?;
-        let switched = keyboard.switch_to(ProfileNumber::from(profile))?;
-        if args.json {
-            let output = waybar_from_profile(&switched);
-            println!("{}", to_string_pretty(&output)?);
-        } else {
-            println!("{keyboard}: switched to {switched}");
-        }
-        return Ok(());
-    }
-
     let keyboard = Keyboard::find(&api)?;
 
-    if args.current {
-        if args.json {
+    match args.command {
+        Some(Command::Switch { profile }) => {
+            let switched = keyboard.switch_to(ProfileNumber::from(profile))?;
+            let output = waybar_from_profile(&switched);
+            print_json(&output)?;
+        }
+        Some(Command::Next) => {
+            let switched = keyboard.switch_next()?;
+            let output = waybar_from_profile(&switched);
+            print_json(&output)?;
+        }
+        Some(Command::Prev) => {
+            let switched = keyboard.switch_prev()?;
+            let output = waybar_from_profile(&switched);
+            print_json(&output)?;
+        }
+        None => {
             let listing = keyboard.profiles()?;
-            let output = waybar_from_listing(&listing);
-            println!("{}", to_string_pretty(&output)?);
-        } else {
-            let active = keyboard.active_profile().ok();
-            match active {
-                Some(number) => println!("{number}"),
-                None => bail!("Could not read current profile from keyboard"),
+            if args.current {
+                let current = listing.profiles().iter().find(|p| p.is_current());
+                match current {
+                    Some(profile) => println!("{}", profile.name()),
+                    None => bail!("Could not read current profile from keyboard"),
+                }
+            } else {
+                let output = waybar_from_listing(&listing);
+                print_json(&output)?;
             }
         }
-        return Ok(());
-    }
-
-    let listing = keyboard.profiles()?;
-    if args.json {
-        let output = waybar_from_listing(&listing);
-        println!("{}", to_string_pretty(&output)?);
-    } else {
-        println!("{keyboard}");
-        print_listing(&listing);
     }
 
     Ok(())
