@@ -97,9 +97,6 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 
 ## Waybar module
 
-All `--json` output follows the Waybar custom module format — `text` (bar display),
-`tooltip` (hover), `class` (CSS), and `alt`.
-
 Add to your Waybar config:
 
 ```json
@@ -112,14 +109,6 @@ Add to your Waybar config:
 }
 ```
 
-Style by profile name in `style.css`:
-
-```css
-#custom-wootswitch.profile-1 { color: #ff6b6b; }
-#custom-wootswitch.profile-2 { color: #a8e6cf; }
-#custom-wootswitch.profile-3 { color: #ffd3a5; }
-#custom-wootswitch.profile-4 { color: #c3a6ff; }
-```
 
 ## Protocol
 

@@ -2,10 +2,7 @@ mod keyboard;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use serde::Serialize;
-use serde_json::to_string_pretty;
-
-use keyboard::{Keyboard, Profile, ProfileNumber};
+use keyboard::{Keyboard, ProfileNumber};
 
 #[derive(Parser)]
 #[command(name = "wootswitch", about = "Wooting keyboard profile switcher")]
@@ -33,31 +30,6 @@ enum Command {
     Prev,
 }
 
-/// Waybar custom module output format.
-///
-/// Waybar reads this when `return-type = "json"` is set on the module.
-/// `text` is shown in the bar; `tooltip` on hover; `class` enables CSS styling.
-#[derive(Serialize)]
-struct WaybarOutput {
-    text: String,
-    tooltip: String,
-    class: String,
-    alt: String,
-}
-
-fn waybar_from_profile(profile: &Profile) -> WaybarOutput {
-    let text = profile.name().to_string();
-    let class = format!("profile-{}", profile.number());
-    let tooltip = format!("{profile}");
-    let alt = text.clone();
-    WaybarOutput { text, tooltip, class, alt }
-}
-
-fn print_json(output: &WaybarOutput) -> Result<()> {
-    println!("{}", to_string_pretty(output)?);
-    Ok(())
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
     let api = hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
@@ -66,18 +38,15 @@ fn main() -> Result<()> {
     match args.command {
         Some(Command::Switch { profile }) => {
             let switched = keyboard.switch_to(ProfileNumber::from(profile))?;
-            let output = waybar_from_profile(&switched);
-            print_json(&output)?;
+            println!("switched to {switched}");
         }
         Some(Command::Next) => {
             let switched = keyboard.switch_next()?;
-            let output = waybar_from_profile(&switched);
-            print_json(&output)?;
+            println!("switched to {switched}");
         }
         Some(Command::Prev) => {
             let switched = keyboard.switch_prev()?;
-            let output = waybar_from_profile(&switched);
-            print_json(&output)?;
+            println!("switched to {switched}");
         }
         Some(Command::List) | None => {
             let listing = keyboard.profiles()?;
