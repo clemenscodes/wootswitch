@@ -1,6 +1,6 @@
 mod keyboard;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::to_string_pretty;
@@ -101,12 +101,23 @@ fn main() -> Result<()> {
                     keyboard.switch_to(ProfileNumber::from(number))?
                 } else {
                     let listing = keyboard.profiles()?;
-                    let found = listing
+                    let matches: Vec<_> = listing
                         .profiles()
                         .iter()
-                        .find(|p| p.name().eq_ignore_ascii_case(&target))
-                        .with_context(|| format!("No profile named '{target}'"))?;
-                    keyboard.switch_to(found.number())?
+                        .filter(|p| p.name().eq_ignore_ascii_case(&target))
+                        .collect();
+                    match matches.as_slice() {
+                        [] => bail!("No profile named '{target}'"),
+                        [found] => keyboard.switch_to(found.number())?,
+                        _ => {
+                            let candidates = matches
+                                .iter()
+                                .map(|p| format!("  {} — {}", p.number(), p.name()))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            bail!("Ambiguous name '{target}', use a number instead:\n{candidates}")
+                        }
+                    }
                 }
             };
             println!("switched to {switched}");
