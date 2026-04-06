@@ -423,7 +423,11 @@ impl Keyboard {
         // or invocations (e.g. repeated waybar polling leaves slot-probe timeouts
         // and profile-changed notifications in the kernel HID buffer).
         let mut drain_buf = vec![0u8; self.protocol.response_size()];
-        while self.device.read_timeout(&mut drain_buf, 0).map_or(false, |n| n > 0) {}
+        while self
+            .device
+            .read_timeout(&mut drain_buf, 0)
+            .map_or(false, |n| n > 0)
+        {}
         self.device
             .send_feature_report(&packet)
             .context("HID feature report write failed")?;

@@ -94,8 +94,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let api =
-        hidapi::HidApi::new().map_err(|e| anyhow!("Failed to initialise HID API: {e}"))?;
+    let api = hidapi::HidApi::new().map_err(|e| anyhow!("Failed to initialise HID API: {e}"))?;
     let keyboard = Keyboard::find(&api)?;
 
     match args.command {
