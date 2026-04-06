@@ -8,6 +8,7 @@ A Rust CLI for switching Wooting keyboard profiles directly via HID — no Wooti
 wootswitch [OPTIONS] [COMMAND]
 
 Commands:
+  list         List all profiles with the active one marked [default]
   switch <N>   Switch to profile N (1-based)
   next         Switch to the next profile (wraps around)
   prev         Switch to the previous profile (wraps around)

@@ -20,6 +20,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List all profiles with the active one marked (default)
+    List,
     /// Switch to profile N (1-based)
     Switch {
         /// Profile number (1-based)
@@ -99,7 +101,7 @@ fn main() -> Result<()> {
             let output = waybar_from_profile(&switched);
             print_json(&output)?;
         }
-        None => {
+        Some(Command::List) | None => {
             let listing = keyboard.profiles()?;
             if args.current {
                 let current = listing.profiles().iter().find(|p| p.is_current());
