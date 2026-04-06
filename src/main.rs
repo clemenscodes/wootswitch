@@ -29,7 +29,7 @@ enum Command {
     /// Switch profiles
     #[command(group(ArgGroup::new("target").required(true).args(["profile", "next", "previous"])))]
     Switch {
-        /// Profile number (1-based) or exact profile name (case-insensitive)
+        /// Profile number (1-based) or profile name (case-insensitive); ambiguous names error with a list
         profile: Option<String>,
         /// Switch to the next profile (wraps around)
         #[arg(long)]
