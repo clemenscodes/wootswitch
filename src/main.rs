@@ -101,7 +101,17 @@ fn main() -> Result<()> {
             let output = waybar_from_profile(&switched);
             print_json(&output)?;
         }
-        Some(Command::List) | None => {
+        Some(Command::List) => {
+            let listing = keyboard.profiles()?;
+            for profile in listing.profiles() {
+                if profile.is_current() {
+                    println!("* {profile} (current)");
+                } else {
+                    println!("  {profile}");
+                }
+            }
+        }
+        None => {
             let listing = keyboard.profiles()?;
             if args.current {
                 let current = listing.profiles().iter().find(|p| p.is_current());

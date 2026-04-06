@@ -18,13 +18,13 @@ Options:
   -h, --help      Print help
 ```
 
-All commands output Waybar-compatible JSON by default. Use `--current` to get just the
-profile name as plain text.
-
 ### Examples
 
 ```sh
-# Waybar JSON — current profile with full tooltip
+# List all profiles (human-readable text)
+wootswitch list
+
+# Waybar JSON — current profile with full tooltip (for the widget)
 wootswitch
 
 # Switch to profile 2 — outputs Waybar JSON for the new state
@@ -36,6 +36,15 @@ wootswitch prev
 
 # Plain text profile name for scripts
 wootswitch --current
+```
+
+`wootswitch list` output:
+
+```
+* Profile 1 — Coding (current)
+  Profile 2 — CS2
+  Profile 3 — Media
+  Profile 4 — Gaming
 ```
 
 ## Supported devices
