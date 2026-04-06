@@ -1,7 +1,7 @@
 use std::fmt;
 
 use anyhow::{bail, Context, Result};
-use hidapi::HidApi;
+use hidapi::{HidApi, HidDevice};
 use serde::Serialize;
 
 const WOOTING_VID: u16 = 0x31E3;
@@ -363,16 +363,16 @@ fn parse_profile_name(data: &[u8]) -> Option<String> {
         return None;
     }
     let protobuf = data.get(METADATA_PROTOBUF_START..)?;
-    if protobuf.get(PROTOBUF_FIELD_TAG) != Some(&METADATA_NAME_TAG) {
+    if protobuf.get(PROTOBUF_FIELD_TAG).copied() != Some(METADATA_NAME_TAG) {
         return None;
     }
-    let name_length = usize::from(*protobuf.get(PROTOBUF_FIELD_LENGTH)?);
+    let name_length = usize::from(protobuf.get(PROTOBUF_FIELD_LENGTH).copied()?);
     let name_bytes = protobuf.get(PROTOBUF_FIELD_DATA..PROTOBUF_FIELD_DATA + name_length)?;
     String::from_utf8(name_bytes.to_vec()).ok()
 }
 
 pub struct Keyboard {
-    device: hidapi::HidDevice,
+    device: HidDevice,
     protocol: Protocol,
     model: String,
 }
@@ -440,7 +440,8 @@ impl Keyboard {
                 .context("HID read failed")?;
             buffer.truncate(bytes_read);
             if buffer.is_empty() || buffer.get(3).copied() == Some(expected_cmd) {
-                return Ok(Response { bytes: buffer });
+                let response = Response { bytes: buffer };
+                return Ok(response);
             }
         }
         bail!("keyboard not responding: no matching response after {HID_RESPONSE_RETRIES} reads")
@@ -489,7 +490,8 @@ impl Keyboard {
     fn count_by_probe(&self) -> Result<u8> {
         let mut count: u8 = 0;
         for slot in 0..MAX_PROFILES {
-            if self.profile_name(ProfileIndex { slot }).is_none() {
+            let index = ProfileIndex { slot };
+            if self.profile_name(index).is_none() {
                 break;
             }
             count += 1;
@@ -504,7 +506,8 @@ impl Keyboard {
     fn probe_profile_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for slot in 0..MAX_PROFILES {
-            match self.profile_name(ProfileIndex { slot }) {
+            let index = ProfileIndex { slot };
+            match self.profile_name(index) {
                 Some(name) => names.push(name),
                 None => break,
             }
@@ -550,7 +553,10 @@ impl Keyboard {
             Protocol::Standard => {
                 let count = self.profile_count()?;
                 (0..count)
-                    .map(|slot| self.profile_name(ProfileIndex { slot }).unwrap_or_default())
+                    .map(|slot| {
+                        let index = ProfileIndex { slot };
+                        self.profile_name(index).unwrap_or_default()
+                    })
                     .collect()
             }
         };
@@ -638,13 +644,15 @@ pub(crate) mod testutil {
             current: current.map(ProfileNumber::from),
         }
     }
+
+    pub(crate) fn number(n: u8) -> ProfileNumber {
+        ProfileNumber::from(n)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Protocol detection ──────────────────────────────────────────────────
 
     #[test]
     fn protocol_detected_from_standard_usage_page() {
@@ -658,10 +666,10 @@ mod tests {
 
     #[test]
     fn protocol_unknown_usage_page_is_err() {
-        assert_eq!(Protocol::try_from(0x0001u16), Err(()));
+        const UNKNOWN_USAGE_PAGE: u16 = 0x0001;
+        assert_eq!(Protocol::try_from(UNKNOWN_USAGE_PAGE), Err(()));
     }
 
-    // ── Command wire values ─────────────────────────────────────────────────
     // These are load-bearing protocol constants; a reorder silently breaks firmware comms.
 
     #[test]
@@ -675,16 +683,15 @@ mod tests {
         assert_eq!(u8::from(Command::GetProfileMetadata), 55);
     }
 
-    // ── Packet layout ───────────────────────────────────────────────────────
-
     #[test]
     fn standard_packet_has_correct_framing_bytes() {
         let packet = Protocol::Standard.build_packet(Command::Ping);
         assert_eq!(packet[0], STANDARD_REPORT_ID);
         assert_eq!(packet[1], STANDARD_PROTOCOL_BYTE);
         assert_eq!(packet[2], WOOTING_COMMAND_MAGIC);
-        assert_eq!(packet[3], 0); // Ping == 0
-        assert_eq!(&packet[4..], &[0, 0, 0, 0]);
+        assert_eq!(packet[3], u8::from(Command::Ping));
+        let zero_params: [u8; 4] = [0; 4];
+        assert_eq!(&packet[4..], &zero_params);
     }
 
     #[test]
@@ -693,8 +700,9 @@ mod tests {
         assert_eq!(packet[0], ARM_REPORT_ID);
         assert_eq!(packet[1], ARM_PROTOCOL_BYTE);
         assert_eq!(packet[2], WOOTING_COMMAND_MAGIC);
-        assert_eq!(packet[3], 0);
-        assert_eq!(&packet[4..], &[0, 0, 0, 0]);
+        assert_eq!(packet[3], u8::from(Command::Ping));
+        let zero_params: [u8; 4] = [0; 4];
+        assert_eq!(&packet[4..], &zero_params);
     }
 
     #[test]
@@ -713,92 +721,68 @@ mod tests {
         assert_eq!(packet[PROFILE_SLOT_BYTE_STANDARD], 0); // standard slot byte must be untouched
     }
 
-    // ── ProfileNumber ↔ ProfileIndex ────────────────────────────────────────
-
     #[test]
     fn profile_index_to_number_adds_one() {
-        assert_eq!(
-            ProfileNumber::from(ProfileIndex { slot: 0 }),
-            ProfileNumber::from(1u8)
-        );
-        assert_eq!(
-            ProfileNumber::from(ProfileIndex { slot: 7 }),
-            ProfileNumber::from(8u8)
-        );
+        let first_index = ProfileIndex { slot: 0 };
+        assert_eq!(ProfileNumber::from(first_index), testutil::number(1));
+        let last_index = ProfileIndex { slot: 7 };
+        assert_eq!(ProfileNumber::from(last_index), testutil::number(8));
     }
 
     #[test]
     fn profile_number_to_index_subtracts_one() {
-        let index = ProfileIndex::try_from(ProfileNumber::from(1u8)).unwrap();
+        let index = ProfileIndex::try_from(testutil::number(1)).unwrap();
         assert_eq!(index.slot, 0);
-        let index = ProfileIndex::try_from(ProfileNumber::from(8u8)).unwrap();
+        let index = ProfileIndex::try_from(testutil::number(8)).unwrap();
         assert_eq!(index.slot, 7);
     }
 
     #[test]
     fn profile_number_zero_is_rejected_as_index() {
-        assert!(ProfileIndex::try_from(ProfileNumber::from(0u8)).is_err());
+        assert!(ProfileIndex::try_from(testutil::number(0)).is_err());
     }
-
-    // ── ProfileNumber wrapping ──────────────────────────────────────────────
 
     #[test]
     fn wrapping_next_advances_by_one() {
-        assert_eq!(
-            ProfileNumber::from(2u8).wrapping_next(4),
-            ProfileNumber::from(3u8)
-        );
+        assert_eq!(testutil::number(2).wrapping_next(4), testutil::number(3));
     }
 
     #[test]
     fn wrapping_next_rolls_over_from_last_to_first() {
-        assert_eq!(
-            ProfileNumber::from(4u8).wrapping_next(4),
-            ProfileNumber::from(1u8)
-        );
+        assert_eq!(testutil::number(4).wrapping_next(4), testutil::number(1));
     }
 
     #[test]
     fn wrapping_prev_retreats_by_one() {
-        assert_eq!(
-            ProfileNumber::from(3u8).wrapping_prev(4),
-            ProfileNumber::from(2u8)
-        );
+        assert_eq!(testutil::number(3).wrapping_prev(4), testutil::number(2));
     }
 
     #[test]
     fn wrapping_prev_rolls_over_from_first_to_last() {
-        assert_eq!(
-            ProfileNumber::from(1u8).wrapping_prev(4),
-            ProfileNumber::from(4u8)
-        );
+        assert_eq!(testutil::number(1).wrapping_prev(4), testutil::number(4));
     }
 
     #[test]
     fn wrapping_next_and_prev_are_inverses() {
-        let start = ProfileNumber::from(2u8);
+        let start = testutil::number(2);
         assert_eq!(start.wrapping_next(4).wrapping_prev(4), start);
         assert_eq!(start.wrapping_prev(4).wrapping_next(4), start);
     }
 
-    // ── Response data slicing ───────────────────────────────────────────────
-
     #[test]
     fn response_data_strips_five_byte_header() {
-        let bytes = vec![0u8, 1, 2, 3, 4, 10, 20, 30];
+        let bytes: Vec<u8> = vec![0, 1, 2, 3, 4, 10, 20, 30];
         let response = Response { bytes };
-        assert_eq!(response.data(), &[10u8, 20, 30]);
+        let expected: &[u8] = &[10, 20, 30];
+        assert_eq!(response.data(), expected);
     }
 
     #[test]
     fn response_data_is_empty_when_shorter_than_header() {
-        let response = Response {
-            bytes: vec![0u8, 1, 2],
-        };
-        assert_eq!(response.data(), &[] as &[u8]);
+        let bytes: Vec<u8> = vec![0, 1, 2];
+        let response = Response { bytes };
+        assert!(response.data().is_empty());
     }
-
-    // ── Protobuf name parsing ───────────────────────────────────────────────
 
     /// Builds the data payload (post-header) for a present profile with the given name.
     fn metadata_data(name: &str) -> Vec<u8> {
@@ -840,14 +824,15 @@ mod tests {
     #[test]
     fn parse_profile_name_returns_none_for_wrong_protobuf_tag() {
         let mut data = metadata_data("Test");
-        data[METADATA_PROTOBUF_START] = 0x0B; // wrong tag
+        data[METADATA_PROTOBUF_START] = METADATA_NAME_TAG + 1;
         assert_eq!(parse_profile_name(&data), None);
     }
 
     #[test]
     fn parse_profile_name_returns_none_for_truncated_data() {
         assert_eq!(parse_profile_name(&[]), None);
-        assert_eq!(parse_profile_name(&[1u8, 0, 0x0A]), None); // tag present but length missing
+        let truncated: &[u8] = &[1, 0, 0x0A]; // tag present but length missing
+        assert_eq!(parse_profile_name(truncated), None);
     }
 
     #[test]
@@ -859,8 +844,6 @@ mod tests {
         data[start + 1] = 0xFE;
         assert_eq!(parse_profile_name(&data), None);
     }
-
-    // ── Display formatting ──────────────────────────────────────────────────
 
     #[test]
     fn profile_display_formats_number_and_name() {

@@ -111,14 +111,15 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 "custom/wootswitch": {
     "exec": "wootswitch list --waybar",
     "return-type": "json",
-    "interval": 5,
+    "interval": 1,
     "on-click": "wootswitch switch --next",
     "on-click-right": "wootswitch switch --previous",
     "format": " {}"
 }
 ```
 
-`wootswitch list --waybar` output:
+`wootswitch list --waybar` emits JSON — Waybar reads `text` for the bar label and
+`tooltip` for the hover popup automatically when `return-type` is `json`:
 
 ```json
 {
@@ -127,6 +128,13 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
   "class": "profile-1",
   "alt": "Coding"
 }
+```
+
+On Hyprland, tooltips require a layer rule so the compositor surfaces popup windows
+correctly. Add to `hyprland.conf`:
+
+```
+layerrule = noanim, ^(waybar)$
 ```
 
 Style by profile in `style.css`:

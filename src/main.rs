@@ -1,6 +1,6 @@
 mod keyboard;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{ArgGroup, CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use serde::Serialize;
@@ -95,7 +95,7 @@ fn main() -> Result<()> {
     }
 
     let api =
-        hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
+        hidapi::HidApi::new().map_err(|e| anyhow!("Failed to initialise HID API: {e}"))?;
     let keyboard = Keyboard::find(&api)?;
 
     match args.command {
