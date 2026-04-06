@@ -83,8 +83,8 @@ imports = [ inputs.wootswitch.nixosModules.default ];
 programs.wootswitch.enable = true;
 ```
 
-The module installs the binary and configures udev rules so the device is accessible
-without root.
+The module installs the binary, configures udev rules so the device is accessible
+without root, and installs shell completions for bash, zsh, and fish.
 
 ### From source
 
