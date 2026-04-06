@@ -1,7 +1,7 @@
 mod keyboard;
 
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::to_string_pretty;
 
@@ -26,15 +26,18 @@ enum Command {
         #[arg(short, long)]
         waybar: bool,
     },
-    /// Switch to profile N (1-based)
+    /// Switch profiles
+    #[command(group(ArgGroup::new("target").required(true).args(["profile", "next", "previous"])))]
     Switch {
         /// Profile number (1-based)
-        profile: u8,
+        profile: Option<u8>,
+        /// Switch to the next profile (wraps around)
+        #[arg(long)]
+        next: bool,
+        /// Switch to the previous profile (wraps around)
+        #[arg(long)]
+        previous: bool,
     },
-    /// Switch to the next profile (wraps around)
-    Next,
-    /// Switch to the previous profile (wraps around)
-    Prev,
 }
 
 /// Waybar custom module output format.
@@ -77,16 +80,14 @@ fn main() -> Result<()> {
     let keyboard = Keyboard::find(&api)?;
 
     match args.command {
-        Some(Command::Switch { profile }) => {
-            let switched = keyboard.switch_to(ProfileNumber::from(profile))?;
-            println!("switched to {switched}");
-        }
-        Some(Command::Next) => {
-            let switched = keyboard.switch_next()?;
-            println!("switched to {switched}");
-        }
-        Some(Command::Prev) => {
-            let switched = keyboard.switch_prev()?;
+        Some(Command::Switch { profile, next, previous }) => {
+            let switched = if next {
+                keyboard.switch_next()?
+            } else if previous {
+                keyboard.switch_prev()?
+            } else {
+                keyboard.switch_to(ProfileNumber::from(profile.unwrap()))?
+            };
             println!("switched to {switched}");
         }
         Some(Command::List { waybar }) => {

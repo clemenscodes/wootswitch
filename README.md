@@ -8,13 +8,16 @@ A Rust CLI for switching Wooting keyboard profiles directly via HID — no Wooti
 wootswitch [OPTIONS] [COMMAND]
 
 Commands:
-  list         List all profiles with the active one marked (default)
-  switch <N>   Switch to profile N (1-based)
-  next         Switch to the next profile (wraps around)
-  prev         Switch to the previous profile (wraps around)
+  list            List all profiles with the active one marked (default)
+  switch [N]      Switch profiles
 
 List options:
-  -w, --waybar    Output Waybar-compatible JSON instead of plain text
+  -w, --waybar      Output Waybar-compatible JSON instead of plain text
+
+Switch options (exactly one required):
+  <N>               Profile number (1-based)
+  --next            Switch to the next profile (wraps around)
+  --previous        Switch to the previous profile (wraps around)
 
 Options:
   -c, --current   Print only the current profile name (plain text, for scripts)
@@ -30,12 +33,12 @@ wootswitch list
 # Waybar JSON — current profile with full tooltip (for the widget)
 wootswitch
 
-# Switch to profile 2 — outputs Waybar JSON for the new state
+# Switch to profile 2
 wootswitch switch 2
 
 # Cycle profiles from a keybind
-wootswitch next
-wootswitch prev
+wootswitch switch --next
+wootswitch switch --previous
 
 # Plain text profile name for scripts
 wootswitch --current
@@ -103,8 +106,8 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
     "exec": "wootswitch list --waybar",
     "return-type": "json",
     "interval": 5,
-    "on-click": "wootswitch next",
-    "on-click-right": "wootswitch prev",
+    "on-click": "wootswitch switch --next",
+    "on-click-right": "wootswitch switch --previous",
     "format": " {}"
 }
 ```
