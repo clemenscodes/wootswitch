@@ -29,8 +29,8 @@ enum Command {
     /// Switch profiles
     #[command(group(ArgGroup::new("target").required(true).args(["profile", "next", "previous"])))]
     Switch {
-        /// Profile number (1-based)
-        profile: Option<u8>,
+        /// Profile number (1-based) or exact profile name (case-insensitive)
+        profile: Option<String>,
         /// Switch to the next profile (wraps around)
         #[arg(long)]
         next: bool,
@@ -96,7 +96,18 @@ fn main() -> Result<()> {
             } else if previous {
                 keyboard.switch_prev()?
             } else {
-                keyboard.switch_to(ProfileNumber::from(profile.unwrap()))?
+                let target = profile.unwrap();
+                if let Ok(number) = target.parse::<u8>() {
+                    keyboard.switch_to(ProfileNumber::from(number))?
+                } else {
+                    let listing = keyboard.profiles()?;
+                    let found = listing
+                        .profiles()
+                        .iter()
+                        .find(|p| p.name().eq_ignore_ascii_case(&target))
+                        .with_context(|| format!("No profile named '{target}'"))?;
+                    keyboard.switch_to(found.number())?
+                }
             };
             println!("switched to {switched}");
         }

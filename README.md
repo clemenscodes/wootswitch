@@ -9,13 +9,13 @@ wootswitch [OPTIONS] [COMMAND]
 
 Commands:
   list            List all profiles with the active one marked (default)
-  switch [N]      Switch profiles
+  switch          Switch profiles
 
 List options:
   -w, --waybar      Output Waybar-compatible JSON instead of plain text
 
 Switch options (exactly one required):
-  <N>               Profile number (1-based)
+  <PROFILE>         Profile number (1-based) or profile name (case-insensitive)
   --next            Switch to the next profile (wraps around)
   --previous        Switch to the previous profile (wraps around)
 
@@ -28,13 +28,15 @@ Options:
 
 ```sh
 # List all profiles (human-readable text)
+wootswitch
 wootswitch list
 
-# Waybar JSON — current profile with full tooltip (for the widget)
-wootswitch
-
-# Switch to profile 2
+# Switch to profile 2 by number
 wootswitch switch 2
+
+# Switch to a profile by name (case-insensitive)
+wootswitch switch CS2
+wootswitch switch coding
 
 # Cycle profiles from a keybind
 wootswitch switch --next
@@ -42,6 +44,9 @@ wootswitch switch --previous
 
 # Plain text profile name for scripts
 wootswitch --current
+
+# Waybar JSON — current profile with full tooltip
+wootswitch list --waybar
 ```
 
 `wootswitch list` output:
@@ -112,7 +117,7 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 }
 ```
 
-`wootswitch --waybar` output:
+`wootswitch list --waybar` output:
 
 ```json
 {

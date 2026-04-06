@@ -1,6 +1,6 @@
 use std::{fmt, thread, time::Duration};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use hidapi::HidApi;
 use serde::Serialize;
 
