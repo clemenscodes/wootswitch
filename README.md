@@ -35,6 +35,7 @@ wootswitch list
 wootswitch switch 2
 
 # Switch to a profile by name (case-insensitive)
+# If multiple profiles share the same name, an error lists them with numbers
 wootswitch switch CS2
 wootswitch switch coding
 
