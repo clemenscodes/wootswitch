@@ -59,7 +59,7 @@ const MAX_PROFILES: u8 = 8;
 const MIN_VALID_PROFILE_COUNT: u8 = 1;
 
 const HID_READ_TIMEOUT_MS: i32 = 1000;
-const HID_STALE_RESPONSE_RETRIES: usize = 4;
+const HID_RESPONSE_RETRIES: usize = 8;
 
 /// Wire-protocol variant — encapsulates every per-device HID difference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -419,24 +419,31 @@ impl Keyboard {
     }
 
     fn exchange(&self, packet: [u8; 8]) -> Result<Response> {
+        // Drain buffered stale input reports accumulated from previous commands
+        // or invocations (e.g. repeated waybar polling leaves slot-probe timeouts
+        // and profile-changed notifications in the kernel HID buffer).
+        let mut drain_buf = vec![0u8; self.protocol.response_size()];
+        while self.device.read_timeout(&mut drain_buf, 0).map_or(false, |n| n > 0) {}
         self.device
             .send_feature_report(&packet)
             .context("HID feature report write failed")?;
+        // After sending a command the keyboard may emit a spontaneous notification
+        // (e.g. a profile-changed event with cmd_echo = 0x0b) before responding to
+        // our command.  Discard any such reports and retry until we see a response
+        // whose cmd_echo matches what we sent, or until we time out (empty read).
         let expected_cmd = packet[3];
-        for _ in 0..HID_STALE_RESPONSE_RETRIES {
+        for _ in 0..HID_RESPONSE_RETRIES {
             let mut buffer = vec![0; self.protocol.response_size()];
             let bytes_read = self
                 .device
                 .read_timeout(&mut buffer, HID_READ_TIMEOUT_MS)
                 .context("HID read failed")?;
             buffer.truncate(bytes_read);
-            let response = Response { bytes: buffer };
-            if response.bytes.is_empty() || response.bytes.get(3).copied() == Some(expected_cmd) {
-                return Ok(response);
+            if buffer.is_empty() || buffer.get(3).copied() == Some(expected_cmd) {
+                return Ok(Response { bytes: buffer });
             }
-            // Stale response from a previous command; discard and re-read.
         }
-        bail!("HID response echo did not match sent command after {HID_STALE_RESPONSE_RETRIES} reads")
+        bail!("keyboard not responding: no matching response after {HID_RESPONSE_RETRIES} reads")
     }
 
     /// Send a command with no profile-index parameter and return the response.
