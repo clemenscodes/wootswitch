@@ -104,8 +104,7 @@ Add to your Waybar config:
 
 ```json
 "custom/wootswitch": {
-    "exec": "wootswitch",
-    "return-type": "json",
+    "exec": "wootswitch --current",
     "interval": 5,
     "on-click": "wootswitch next",
     "on-click-right": "wootswitch prev",
@@ -113,18 +112,7 @@ Add to your Waybar config:
 }
 ```
 
-Example output of `wootswitch --current --json`:
-
-```json
-{
-  "text": "Office",
-  "tooltip": "  Profile 1 — Gaming\n* Profile 2 — Office (current)\n  Profile 3 — Media",
-  "class": "profile-2",
-  "alt": "Office"
-}
-```
-
-Style by profile in `style.css`:
+Style by profile name in `style.css`:
 
 ```css
 #custom-wootswitch.profile-1 { color: #ff6b6b; }

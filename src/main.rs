@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use serde_json::to_string_pretty;
 
-use keyboard::{Keyboard, Profile, ProfileListing, ProfileNumber};
+use keyboard::{Keyboard, Profile, ProfileNumber};
 
 #[derive(Parser)]
 #[command(name = "wootswitch", about = "Wooting keyboard profile switcher")]
@@ -45,28 +45,6 @@ struct WaybarOutput {
     alt: String,
 }
 
-fn waybar_from_listing(listing: &ProfileListing) -> WaybarOutput {
-    let current_profile = listing.profiles().iter().find(|p| p.is_current());
-    let text = current_profile.map(|p| p.name().to_string()).unwrap_or_default();
-    let class = current_profile
-        .map(|p| format!("profile-{}", p.number()))
-        .unwrap_or_else(|| "profile-unknown".to_string());
-    let tooltip = listing
-        .profiles()
-        .iter()
-        .map(|p| {
-            if p.is_current() {
-                format!("* {p} (current)")
-            } else {
-                format!("  {p}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let alt = text.clone();
-    WaybarOutput { text, tooltip, class, alt }
-}
-
 fn waybar_from_profile(profile: &Profile) -> WaybarOutput {
     let text = profile.name().to_string();
     let class = format!("profile-{}", profile.number());
@@ -101,17 +79,7 @@ fn main() -> Result<()> {
             let output = waybar_from_profile(&switched);
             print_json(&output)?;
         }
-        Some(Command::List) => {
-            let listing = keyboard.profiles()?;
-            for profile in listing.profiles() {
-                if profile.is_current() {
-                    println!("* {profile} (current)");
-                } else {
-                    println!("  {profile}");
-                }
-            }
-        }
-        None => {
+        Some(Command::List) | None => {
             let listing = keyboard.profiles()?;
             if args.current {
                 let current = listing.profiles().iter().find(|p| p.is_current());
@@ -120,8 +88,13 @@ fn main() -> Result<()> {
                     None => bail!("Could not read current profile from keyboard"),
                 }
             } else {
-                let output = waybar_from_listing(&listing);
-                print_json(&output)?;
+                for profile in listing.profiles() {
+                    if profile.is_current() {
+                        println!("* {profile} (current)");
+                    } else {
+                        println!("  {profile}");
+                    }
+                }
             }
         }
     }
