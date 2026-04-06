@@ -1,9 +1,11 @@
 mod keyboard;
 
 use anyhow::{bail, Result};
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
 use serde::Serialize;
 use serde_json::to_string;
+use std::io::stdout;
 
 use keyboard::{Keyboard, ProfileListing, ProfileNumber};
 
@@ -37,6 +39,11 @@ enum Command {
         /// Switch to the previous profile (wraps around)
         #[arg(long)]
         previous: bool,
+    },
+    /// Print a shell completion script to stdout
+    #[command(hide = true)]
+    Completions {
+        shell: Shell,
     },
 }
 
@@ -81,6 +88,14 @@ fn waybar_output(listing: &ProfileListing) -> WaybarOutput {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Completions are handled before HID initialisation: the Nix build sandbox
+    // and CI have no keyboard hardware, but still need to generate completion scripts.
+    if let Some(Command::Completions { shell }) = args.command {
+        generate(shell, &mut Args::command(), "wootswitch", &mut stdout());
+        return Ok(());
+    }
+
     let api =
         hidapi::HidApi::new().map_err(|e| anyhow::anyhow!("Failed to initialise HID API: {e}"))?;
     let keyboard = Keyboard::find(&api)?;
@@ -96,7 +111,11 @@ fn main() -> Result<()> {
             } else if previous {
                 keyboard.switch_prev()?
             } else {
-                let target = profile.unwrap();
+                let Some(target) = profile else {
+                    unreachable!(
+                        "clap ArgGroup guarantees profile is set when next and previous are false"
+                    );
+                };
                 if let Ok(number) = target.parse::<u8>() {
                     keyboard.switch_to(ProfileNumber::from(number))?
                 } else {
@@ -128,15 +147,10 @@ fn main() -> Result<()> {
                 let output = waybar_output(&listing);
                 println!("{}", to_string(&output)?);
             } else {
-                for profile in listing.profiles() {
-                    if profile.is_current() {
-                        println!("* {profile} (current)");
-                    } else {
-                        println!("  {profile}");
-                    }
-                }
+                print!("{listing}");
             }
         }
+        Some(Command::Completions { .. }) => unreachable!("handled before HID init"),
         None => {
             let listing = keyboard.profiles()?;
             if args.current {
@@ -146,16 +160,59 @@ fn main() -> Result<()> {
                     None => bail!("Could not read current profile from keyboard"),
                 }
             } else {
-                for profile in listing.profiles() {
-                    if profile.is_current() {
-                        println!("* {profile} (current)");
-                    } else {
-                        println!("  {profile}");
-                    }
-                }
+                print!("{listing}");
             }
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keyboard::testutil;
+
+    fn two_profile_listing() -> ProfileListing {
+        testutil::listing(
+            vec![
+                testutil::profile(1, false, "Default"),
+                testutil::profile(2, true, "Gaming"),
+            ],
+            Some(2),
+        )
+    }
+
+    #[test]
+    fn waybar_text_is_current_profile_name() {
+        let output = waybar_output(&two_profile_listing());
+        assert_eq!(output.text, "Gaming");
+    }
+
+    #[test]
+    fn waybar_alt_matches_text() {
+        let output = waybar_output(&two_profile_listing());
+        assert_eq!(output.alt, output.text);
+    }
+
+    #[test]
+    fn waybar_class_includes_profile_number() {
+        let output = waybar_output(&two_profile_listing());
+        assert_eq!(output.class, "profile-2");
+    }
+
+    #[test]
+    fn waybar_tooltip_marks_current_profile() {
+        let output = waybar_output(&two_profile_listing());
+        assert!(output.tooltip.contains("* Profile 2 — Gaming (current)"));
+        assert!(output.tooltip.contains("  Profile 1 — Default"));
+    }
+
+    #[test]
+    fn waybar_unknown_class_when_no_active_profile() {
+        let listing = testutil::listing(vec![testutil::profile(1, false, "Default")], None);
+        let output = waybar_output(&listing);
+        assert_eq!(output.class, "profile-unknown");
+        assert_eq!(output.text, "");
+    }
 }

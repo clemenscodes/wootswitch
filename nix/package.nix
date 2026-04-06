@@ -3,6 +3,7 @@
   craneLib,
   udev,
   pkg-config,
+  installShellFiles,
 }: let
   src = lib.fileset.toSource {
     root = ../.;
@@ -26,6 +27,13 @@ in
     // {
       inherit cargoArtifacts;
       CARGO_BUILD_RUSTFLAGS = "-C strip=symbols";
+      nativeBuildInputs = commonArgs.nativeBuildInputs ++ [installShellFiles];
+      postInstall = ''
+        installShellCompletion --cmd wootswitch \
+          --bash <($out/bin/wootswitch completions bash) \
+          --zsh <($out/bin/wootswitch completions zsh) \
+          --fish <($out/bin/wootswitch completions fish)
+      '';
       passthru = {inherit src commonArgs cargoArtifacts;};
     }
   )

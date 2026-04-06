@@ -325,6 +325,19 @@ impl fmt::Display for Profile {
     }
 }
 
+impl fmt::Display for ProfileListing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for profile in &self.profiles {
+            if profile.current {
+                writeln!(f, "* {profile} (current)")?;
+            } else {
+                writeln!(f, "  {profile}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A raw HID response from the keyboard.
 pub struct Response {
     bytes: Vec<u8>,
@@ -341,6 +354,23 @@ impl Response {
     pub fn data(&self) -> &[u8] {
         self.bytes.get(DATA_OFFSET..).unwrap_or_default()
     }
+}
+
+/// Parses a profile name out of the data payload of a `GetProfileMetadata` response.
+///
+/// Returns `None` if the slot is absent (`payload_length == 0`), the protobuf tag is
+/// unexpected, or the name bytes are not valid UTF-8.
+fn parse_profile_name(data: &[u8]) -> Option<String> {
+    if data.first().copied() == Some(METADATA_ABSENT_PAYLOAD_LENGTH) {
+        return None;
+    }
+    let protobuf = data.get(METADATA_PROTOBUF_START..)?;
+    if protobuf.get(PROTOBUF_FIELD_TAG) != Some(&METADATA_NAME_TAG) {
+        return None;
+    }
+    let name_length = usize::from(*protobuf.get(PROTOBUF_FIELD_LENGTH)?);
+    let name_bytes = protobuf.get(PROTOBUF_FIELD_DATA..PROTOBUF_FIELD_DATA + name_length)?;
+    String::from_utf8(name_bytes.to_vec()).ok()
 }
 
 pub struct Keyboard {
@@ -463,19 +493,7 @@ impl Keyboard {
         let response = self
             .send_for_profile(Command::GetProfileMetadata, index)
             .ok()?;
-        let data = response.data();
-
-        if data.first().copied() == Some(METADATA_ABSENT_PAYLOAD_LENGTH) {
-            return None;
-        }
-
-        let protobuf = data.get(METADATA_PROTOBUF_START..)?;
-        if protobuf.get(PROTOBUF_FIELD_TAG) != Some(&METADATA_NAME_TAG) {
-            return None;
-        }
-        let name_length = usize::from(*protobuf.get(PROTOBUF_FIELD_LENGTH)?);
-        let name_bytes = protobuf.get(PROTOBUF_FIELD_DATA..PROTOBUF_FIELD_DATA + name_length)?;
-        String::from_utf8(name_bytes.to_vec()).ok()
+        parse_profile_name(response.data())
     }
 
     /// Returns all profiles and the currently active one in a single operation.
@@ -498,6 +516,25 @@ impl Keyboard {
         Ok(listing)
     }
 
+    /// Initialise, activate, and reload the profile at `index`.
+    ///
+    /// Caller is responsible for bounds-checking `index` against `profile_count`.
+    fn activate(&self, index: ProfileIndex) -> Result<Profile> {
+        self.init()?;
+        self.send_for_profile(Command::ActivateProfile, index)?;
+        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
+        self.send_for_profile(Command::ReloadProfile, index)?;
+        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
+        let number = ProfileNumber::from(index);
+        let name = self.profile_name(index).unwrap_or_default();
+        let switched = Profile {
+            number,
+            current: true,
+            name,
+        };
+        Ok(switched)
+    }
+
     /// Bounds-check, initialise, activate, and reload the given profile.
     ///
     /// Returns the profile that was switched to, including its name.
@@ -507,31 +544,297 @@ impl Keyboard {
         if index.slot >= count {
             bail!("Profile {profile} does not exist (keyboard has {count} profiles)");
         }
-        self.init()?;
-        self.send_for_profile(Command::ActivateProfile, index)?;
-        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
-        self.send_for_profile(Command::ReloadProfile, index)?;
-        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
-        let name = self.profile_name(index).unwrap_or_default();
-        let switched = Profile {
-            number: profile,
-            current: true,
-            name,
-        };
-        Ok(switched)
+        self.activate(index)
     }
 
     /// Switch to the next profile, wrapping from the last back to the first.
     pub fn switch_next(&self) -> Result<Profile> {
         let count = self.profile_count()?;
         let current = self.active_profile()?;
-        self.switch_to(current.wrapping_next(count))
+        let index = ProfileIndex::try_from(current.wrapping_next(count))?;
+        self.activate(index)
     }
 
     /// Switch to the previous profile, wrapping from the first back to the last.
     pub fn switch_prev(&self) -> Result<Profile> {
         let count = self.profile_count()?;
         let current = self.active_profile()?;
-        self.switch_to(current.wrapping_prev(count))
+        let index = ProfileIndex::try_from(current.wrapping_prev(count))?;
+        self.activate(index)
+    }
+}
+
+/// Test-only constructors for [`Profile`] and [`ProfileListing`].
+///
+/// The fields of these types are private; this module lets other test modules
+/// build instances without exposing constructors in production code.
+#[cfg(test)]
+pub(crate) mod testutil {
+    use super::{Profile, ProfileListing, ProfileNumber};
+
+    pub(crate) fn profile(number: u8, current: bool, name: &str) -> Profile {
+        Profile {
+            number: ProfileNumber::from(number),
+            current,
+            name: name.to_string(),
+        }
+    }
+
+    pub(crate) fn listing(profiles: Vec<Profile>, current: Option<u8>) -> ProfileListing {
+        ProfileListing {
+            profiles,
+            current: current.map(ProfileNumber::from),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Protocol detection ──────────────────────────────────────────────────
+
+    #[test]
+    fn protocol_detected_from_standard_usage_page() {
+        assert_eq!(Protocol::try_from(CFG_USAGE_PAGE), Ok(Protocol::Standard));
+    }
+
+    #[test]
+    fn protocol_detected_from_arm_usage_page() {
+        assert_eq!(Protocol::try_from(CFG_V3_USAGE_PAGE), Ok(Protocol::Arm));
+    }
+
+    #[test]
+    fn protocol_unknown_usage_page_is_err() {
+        assert_eq!(Protocol::try_from(0x0001u16), Err(()));
+    }
+
+    // ── Command wire values ─────────────────────────────────────────────────
+    // These are load-bearing protocol constants; a reorder silently breaks firmware comms.
+
+    #[test]
+    fn command_wire_values_match_protocol_spec() {
+        assert_eq!(u8::from(Command::Ping), 0);
+        assert_eq!(u8::from(Command::GetDigitalProfilesCount), 9);
+        assert_eq!(u8::from(Command::GetCurrentKeyboardProfileIndex), 11);
+        assert_eq!(u8::from(Command::ActivateProfile), 23);
+        assert_eq!(u8::from(Command::WootDevInit), 33);
+        assert_eq!(u8::from(Command::ReloadProfile), 38);
+        assert_eq!(u8::from(Command::GetProfileMetadata), 55);
+    }
+
+    // ── Packet layout ───────────────────────────────────────────────────────
+
+    #[test]
+    fn standard_packet_has_correct_framing_bytes() {
+        let packet = Protocol::Standard.build_packet(Command::Ping);
+        assert_eq!(packet[0], STANDARD_REPORT_ID);
+        assert_eq!(packet[1], STANDARD_PROTOCOL_BYTE);
+        assert_eq!(packet[2], WOOTING_COMMAND_MAGIC);
+        assert_eq!(packet[3], 0); // Ping == 0
+        assert_eq!(&packet[4..], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn arm_packet_has_correct_framing_bytes() {
+        let packet = Protocol::Arm.build_packet(Command::Ping);
+        assert_eq!(packet[0], ARM_REPORT_ID);
+        assert_eq!(packet[1], ARM_PROTOCOL_BYTE);
+        assert_eq!(packet[2], WOOTING_COMMAND_MAGIC);
+        assert_eq!(packet[3], 0);
+        assert_eq!(&packet[4..], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn standard_profile_packet_places_slot_at_byte_7() {
+        let index = ProfileIndex { slot: 3 };
+        let packet = Protocol::Standard.build_packet_for_profile(Command::ActivateProfile, index);
+        assert_eq!(packet[PROFILE_SLOT_BYTE_STANDARD], 3);
+        assert_eq!(packet[PROFILE_SLOT_BYTE_ARM], 0); // ARM slot byte must be untouched
+    }
+
+    #[test]
+    fn arm_profile_packet_places_slot_at_byte_4() {
+        let index = ProfileIndex { slot: 3 };
+        let packet = Protocol::Arm.build_packet_for_profile(Command::ActivateProfile, index);
+        assert_eq!(packet[PROFILE_SLOT_BYTE_ARM], 3);
+        assert_eq!(packet[PROFILE_SLOT_BYTE_STANDARD], 0); // standard slot byte must be untouched
+    }
+
+    // ── ProfileNumber ↔ ProfileIndex ────────────────────────────────────────
+
+    #[test]
+    fn profile_index_to_number_adds_one() {
+        assert_eq!(
+            ProfileNumber::from(ProfileIndex { slot: 0 }),
+            ProfileNumber::from(1u8)
+        );
+        assert_eq!(
+            ProfileNumber::from(ProfileIndex { slot: 7 }),
+            ProfileNumber::from(8u8)
+        );
+    }
+
+    #[test]
+    fn profile_number_to_index_subtracts_one() {
+        let index = ProfileIndex::try_from(ProfileNumber::from(1u8)).unwrap();
+        assert_eq!(index.slot, 0);
+        let index = ProfileIndex::try_from(ProfileNumber::from(8u8)).unwrap();
+        assert_eq!(index.slot, 7);
+    }
+
+    #[test]
+    fn profile_number_zero_is_rejected_as_index() {
+        assert!(ProfileIndex::try_from(ProfileNumber::from(0u8)).is_err());
+    }
+
+    // ── ProfileNumber wrapping ──────────────────────────────────────────────
+
+    #[test]
+    fn wrapping_next_advances_by_one() {
+        assert_eq!(
+            ProfileNumber::from(2u8).wrapping_next(4),
+            ProfileNumber::from(3u8)
+        );
+    }
+
+    #[test]
+    fn wrapping_next_rolls_over_from_last_to_first() {
+        assert_eq!(
+            ProfileNumber::from(4u8).wrapping_next(4),
+            ProfileNumber::from(1u8)
+        );
+    }
+
+    #[test]
+    fn wrapping_prev_retreats_by_one() {
+        assert_eq!(
+            ProfileNumber::from(3u8).wrapping_prev(4),
+            ProfileNumber::from(2u8)
+        );
+    }
+
+    #[test]
+    fn wrapping_prev_rolls_over_from_first_to_last() {
+        assert_eq!(
+            ProfileNumber::from(1u8).wrapping_prev(4),
+            ProfileNumber::from(4u8)
+        );
+    }
+
+    #[test]
+    fn wrapping_next_and_prev_are_inverses() {
+        let start = ProfileNumber::from(2u8);
+        assert_eq!(start.wrapping_next(4).wrapping_prev(4), start);
+        assert_eq!(start.wrapping_prev(4).wrapping_next(4), start);
+    }
+
+    // ── Response data slicing ───────────────────────────────────────────────
+
+    #[test]
+    fn response_data_strips_five_byte_header() {
+        let bytes = vec![0u8, 1, 2, 3, 4, 10, 20, 30];
+        let response = Response { bytes };
+        assert_eq!(response.data(), &[10u8, 20, 30]);
+    }
+
+    #[test]
+    fn response_data_is_empty_when_shorter_than_header() {
+        let response = Response {
+            bytes: vec![0u8, 1, 2],
+        };
+        assert_eq!(response.data(), &[] as &[u8]);
+    }
+
+    // ── Protobuf name parsing ───────────────────────────────────────────────
+
+    /// Builds the data payload (post-header) for a present profile with the given name.
+    fn metadata_data(name: &str) -> Vec<u8> {
+        let name_bytes = name.as_bytes();
+        let name_len = u8::try_from(name_bytes.len()).expect("test name fits in u8");
+        let mut data = Vec::new();
+        data.push(name_len + 2); // payload_length: non-zero = slot occupied
+        data.push(0x00); // padding
+        data.push(METADATA_NAME_TAG); // 0x0A
+        data.push(name_len); // field length
+        data.extend_from_slice(name_bytes);
+        data
+    }
+
+    #[test]
+    fn parse_profile_name_returns_name_for_valid_payload() {
+        assert_eq!(
+            parse_profile_name(&metadata_data("Gaming")),
+            Some("Gaming".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_profile_name_returns_none_for_absent_slot() {
+        // payload_length == 0 signals no profile at this slot
+        let data = [
+            METADATA_ABSENT_PAYLOAD_LENGTH,
+            0x00,
+            METADATA_NAME_TAG,
+            4,
+            b'T',
+            b'e',
+            b's',
+            b't',
+        ];
+        assert_eq!(parse_profile_name(&data), None);
+    }
+
+    #[test]
+    fn parse_profile_name_returns_none_for_wrong_protobuf_tag() {
+        let mut data = metadata_data("Test");
+        data[METADATA_PROTOBUF_START] = 0x0B; // wrong tag
+        assert_eq!(parse_profile_name(&data), None);
+    }
+
+    #[test]
+    fn parse_profile_name_returns_none_for_truncated_data() {
+        assert_eq!(parse_profile_name(&[]), None);
+        assert_eq!(parse_profile_name(&[1u8, 0, 0x0A]), None); // tag present but length missing
+    }
+
+    #[test]
+    fn parse_profile_name_returns_none_for_invalid_utf8() {
+        let mut data = metadata_data("ok");
+        // Overwrite the name bytes with invalid UTF-8
+        let start = METADATA_PROTOBUF_START + PROTOBUF_FIELD_DATA;
+        data[start] = 0xFF;
+        data[start + 1] = 0xFE;
+        assert_eq!(parse_profile_name(&data), None);
+    }
+
+    // ── Display formatting ──────────────────────────────────────────────────
+
+    #[test]
+    fn profile_display_formats_number_and_name() {
+        let profile = testutil::profile(2, false, "FPS");
+        assert_eq!(profile.to_string(), "Profile 2 — FPS");
+    }
+
+    #[test]
+    fn profile_listing_display_marks_active_profile() {
+        let listing = testutil::listing(
+            vec![
+                testutil::profile(1, false, "Default"),
+                testutil::profile(2, true, "Gaming"),
+                testutil::profile(3, false, "Office"),
+            ],
+            Some(2),
+        );
+        assert_eq!(
+            listing.to_string(),
+            "  Profile 1 — Default\n* Profile 2 — Gaming (current)\n  Profile 3 — Office\n",
+        );
+    }
+
+    #[test]
+    fn profile_listing_display_with_no_active_profile() {
+        let listing = testutil::listing(vec![testutil::profile(1, false, "Default")], None);
+        assert_eq!(listing.to_string(), "  Profile 1 — Default\n");
     }
 }
