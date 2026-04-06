@@ -3,7 +3,7 @@ mod keyboard;
 use anyhow::{bail, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use serde::Serialize;
-use serde_json::to_string_pretty;
+use serde_json::to_string;
 
 use keyboard::{Keyboard, ProfileListing, ProfileNumber};
 
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
             let listing = keyboard.profiles()?;
             if waybar {
                 let output = waybar_output(&listing);
-                println!("{}", to_string_pretty(&output)?);
+                println!("{}", to_string(&output)?);
             } else {
                 for profile in listing.profiles() {
                     if profile.is_current() {
