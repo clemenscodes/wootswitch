@@ -1,4 +1,4 @@
-use std::{fmt, thread, time::Duration};
+use std::fmt;
 
 use anyhow::{bail, Context, Result};
 use hidapi::HidApi;
@@ -57,11 +57,8 @@ const PROFILE_SLOT_BYTE_STANDARD: usize = 7;
 
 const MAX_PROFILES: u8 = 8;
 const MIN_VALID_PROFILE_COUNT: u8 = 1;
-/// Fallback profile count when the firmware does not report one (ARM devices).
-const DEFAULT_PROFILE_COUNT: u8 = 4;
 
 const HID_READ_TIMEOUT_MS: i32 = 1000;
-const PROFILE_SWITCH_SETTLE_MS: u64 = 100;
 
 /// Wire-protocol variant — encapsulates every per-device HID difference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -471,21 +468,46 @@ impl Keyboard {
         Ok(ProfileNumber::from(index))
     }
 
-    fn profile_count(&self) -> Result<u8> {
-        let response = self.send(Command::GetDigitalProfilesCount)?;
-        let count = response.data().first().copied().unwrap_or_default();
-        if (MIN_VALID_PROFILE_COUNT..=MAX_PROFILES).contains(&count) {
-            return Ok(count);
+    /// Probe profile slots via `GetProfileMetadata`, returning how many exist.
+    ///
+    /// Stops at the first absent slot. Errors if no profiles are found at all.
+    fn count_by_probe(&self) -> Result<u8> {
+        let mut count: u8 = 0;
+        for slot in 0..MAX_PROFILES {
+            if self.profile_name(ProfileIndex { slot }).is_none() {
+                break;
+            }
+            count += 1;
         }
-        // `GetDigitalProfilesCount` is unsupported on 60HE+ ARM (returns error 0x66).
-        // Fall back: probe via GetProfileMetadata until we hit an absent slot.
-        // `.last()` gives the highest slot that responded; adding 1 yields the count.
-        // If no slots respond, fall back to DEFAULT_PROFILE_COUNT.
-        let probed_count = (0..MAX_PROFILES)
-            .take_while(|&slot| self.profile_name(ProfileIndex { slot }).is_some())
-            .last()
-            .map_or(DEFAULT_PROFILE_COUNT, |slot| slot + 1);
-        Ok(probed_count)
+        if count == 0 {
+            bail!("No profiles found on keyboard");
+        }
+        Ok(count)
+    }
+
+    /// Probe all profile slots, collecting names. Stops at the first absent slot.
+    fn probe_profile_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for slot in 0..MAX_PROFILES {
+            match self.profile_name(ProfileIndex { slot }) {
+                Some(name) => names.push(name),
+                None => break,
+            }
+        }
+        names
+    }
+
+    fn profile_count(&self) -> Result<u8> {
+        // `GetDigitalProfilesCount` (cmd 9) is unsupported on ARM devices (60HE+, Two HE ARM, …)
+        // and returns a garbage status byte that may fall within [1, 8]. Always probe on ARM.
+        if self.protocol == Protocol::Standard {
+            let response = self.send(Command::GetDigitalProfilesCount)?;
+            let count = response.data().first().copied().unwrap_or_default();
+            if (MIN_VALID_PROFILE_COUNT..=MAX_PROFILES).contains(&count) {
+                return Ok(count);
+            }
+        }
+        self.count_by_probe()
     }
 
     /// Returns the name of the profile at the given index, or `None` if the slot is absent.
@@ -497,14 +519,31 @@ impl Keyboard {
     }
 
     /// Returns all profiles and the currently active one in a single operation.
+    ///
+    /// On ARM, probes slots once via `GetProfileMetadata` (collecting names and count together).
+    /// On Standard, queries `GetDigitalProfilesCount` then fetches each name.
     pub fn profiles(&self) -> Result<ProfileListing> {
         let current = self.active_profile().ok();
-        let count = self.profile_count()?;
-        let profiles = (0..count)
-            .map(|slot| {
+        let names: Vec<String> = match self.protocol {
+            Protocol::Arm => {
+                let names = self.probe_profile_names();
+                if names.is_empty() {
+                    bail!("No profiles found on keyboard");
+                }
+                names
+            }
+            Protocol::Standard => {
+                let count = self.profile_count()?;
+                (0..count)
+                    .map(|slot| self.profile_name(ProfileIndex { slot }).unwrap_or_default())
+                    .collect()
+            }
+        };
+        let profiles = (0..MAX_PROFILES)
+            .zip(names)
+            .map(|(slot, name)| {
                 let index = ProfileIndex { slot };
                 let number = ProfileNumber::from(index);
-                let name = self.profile_name(index).unwrap_or_default();
                 Profile {
                     number,
                     current: current == Some(number),
@@ -522,9 +561,7 @@ impl Keyboard {
     fn activate(&self, index: ProfileIndex) -> Result<Profile> {
         self.init()?;
         self.send_for_profile(Command::ActivateProfile, index)?;
-        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
         self.send_for_profile(Command::ReloadProfile, index)?;
-        thread::sleep(Duration::from_millis(PROFILE_SWITCH_SETTLE_MS));
         let number = ProfileNumber::from(index);
         let name = self.profile_name(index).unwrap_or_default();
         let switched = Profile {

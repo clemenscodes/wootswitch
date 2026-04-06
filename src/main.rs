@@ -42,9 +42,7 @@ enum Command {
     },
     /// Print a shell completion script to stdout
     #[command(hide = true)]
-    Completions {
-        shell: Shell,
-    },
+    Completions { shell: Shell },
 }
 
 /// Waybar custom module output format.
