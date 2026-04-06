@@ -130,12 +130,6 @@ Then reload rules: `sudo udevadm control --reload && sudo udevadm trigger`.
 }
 ```
 
-On Hyprland, tooltips require a layer rule so the compositor surfaces popup windows
-correctly. Add to `hyprland.conf`:
-
-```
-layerrule = noanim, ^(waybar)$
-```
 
 Style by profile in `style.css`:
 
