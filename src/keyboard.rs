@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Deref;
 
 use anyhow::{bail, Context, Result};
 use hidapi::{HidApi, HidDevice};
@@ -50,7 +51,13 @@ const STANDARD_RESPONSE_SIZE: usize = 256;
 /// ARM response: 1 report ID byte + 32 data bytes.
 const ARM_RESPONSE_SIZE: usize = 33;
 
-/// Byte positions within the 8-byte command packet for the profile slot argument.
+/// Size of a HID feature report command packet, in bytes.
+const COMMAND_PACKET_SIZE: usize = 8;
+
+/// Byte offset of the command ID within a `CommandPacket`.
+const COMMAND_ID_OFFSET: usize = 3;
+
+/// Byte positions within a `CommandPacket` for the profile slot argument.
 /// ARM firmware reads the slot from byte 4; standard firmware from byte 7.
 const PROFILE_SLOT_BYTE_ARM: usize = 4;
 const PROFILE_SLOT_BYTE_STANDARD: usize = 7;
@@ -60,6 +67,47 @@ const MIN_VALID_PROFILE_COUNT: u8 = 1;
 
 const HID_READ_TIMEOUT_MS: i32 = 1000;
 const HID_RESPONSE_RETRIES: usize = 8;
+
+/// An 8-byte HID feature report packet sent to the keyboard to issue a command.
+///
+/// The fixed size matches the keyboard's HID descriptor: the host must always
+/// send exactly 8 bytes via `send_feature_report`, even when the trailing
+/// argument bytes are unused (zero).
+struct CommandPacket {
+    bytes: [u8; COMMAND_PACKET_SIZE],
+}
+
+impl CommandPacket {
+    fn new(report_id: u8, protocol_byte: u8, command: Command) -> Self {
+        let bytes = [
+            report_id,
+            protocol_byte,
+            WOOTING_COMMAND_MAGIC,
+            u8::from(command),
+            0,
+            0,
+            0,
+            0,
+        ];
+        Self { bytes }
+    }
+
+    fn command_id(&self) -> u8 {
+        self.bytes[COMMAND_ID_OFFSET]
+    }
+
+    fn set_profile_slot(&mut self, offset: usize, slot: u8) {
+        self.bytes[offset] = slot;
+    }
+}
+
+impl Deref for CommandPacket {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 
 /// Wire-protocol variant — encapsulates every per-device HID difference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,25 +152,16 @@ impl Protocol {
         }
     }
 
-    fn build_packet(self, command: Command) -> [u8; 8] {
-        [
-            self.report_id(),
-            self.protocol_byte(),
-            WOOTING_COMMAND_MAGIC,
-            u8::from(command),
-            0,
-            0,
-            0,
-            0,
-        ]
+    fn build_packet(self, command: Command) -> CommandPacket {
+        CommandPacket::new(self.report_id(), self.protocol_byte(), command)
     }
 
     /// ARM firmware reads the profile slot from byte 4; standard from byte 7.
-    fn build_packet_for_profile(self, command: Command, index: ProfileIndex) -> [u8; 8] {
+    fn build_packet_for_profile(self, command: Command, index: ProfileIndex) -> CommandPacket {
         let mut packet = self.build_packet(command);
         match self {
-            Self::Standard => packet[PROFILE_SLOT_BYTE_STANDARD] = index.slot,
-            Self::Arm => packet[PROFILE_SLOT_BYTE_ARM] = index.slot,
+            Self::Standard => packet.set_profile_slot(PROFILE_SLOT_BYTE_STANDARD, index.slot),
+            Self::Arm => packet.set_profile_slot(PROFILE_SLOT_BYTE_ARM, index.slot),
         }
         packet
     }
@@ -213,6 +252,12 @@ pub(crate) struct ProfileIndex {
     slot: u8,
 }
 
+impl ProfileIndex {
+    pub(crate) fn new(slot: u8) -> Self {
+        Self { slot }
+    }
+}
+
 /// 1-based profile number as shown to the user.
 ///
 /// Construct via `From<u8>`. The raw number is intentionally not exposed;
@@ -225,14 +270,14 @@ pub struct ProfileNumber {
 
 impl From<u8> for ProfileNumber {
     fn from(number: u8) -> Self {
-        ProfileNumber { number }
+        Self { number }
     }
 }
 
 impl ProfileNumber {
     /// Returns the next profile, wrapping from the last back to the first.
     pub fn wrapping_next(self, count: u8) -> ProfileNumber {
-        ProfileNumber {
+        Self {
             number: (self.number % count) + 1,
         }
     }
@@ -244,13 +289,13 @@ impl ProfileNumber {
         } else {
             self.number - 1
         };
-        ProfileNumber { number }
+        Self { number }
     }
 }
 
 impl From<ProfileIndex> for ProfileNumber {
     fn from(index: ProfileIndex) -> Self {
-        ProfileNumber {
+        Self {
             number: index.slot + 1,
         }
     }
@@ -263,7 +308,7 @@ impl TryFrom<ProfileNumber> for ProfileIndex {
         if profile.number == 0 {
             bail!("Profile number must be 1 or higher");
         }
-        let index = ProfileIndex {
+        let index = Self {
             slot: profile.number - 1,
         };
         Ok(index)
@@ -284,13 +329,12 @@ pub struct ProfileListing {
 }
 
 impl ProfileListing {
-    pub fn profiles(&self) -> &[Profile] {
-        &self.profiles
+    fn new(profiles: Vec<Profile>, current: Option<ProfileNumber>) -> Self {
+        Self { profiles, current }
     }
 
-    #[allow(dead_code)]
-    pub fn current(&self) -> Option<ProfileNumber> {
-        self.current
+    pub fn profiles(&self) -> &[Profile] {
+        &self.profiles
     }
 }
 
@@ -302,8 +346,15 @@ pub struct Profile {
     name: String,
 }
 
-#[allow(dead_code)]
 impl Profile {
+    fn new(number: ProfileNumber, current: bool, name: String) -> Self {
+        Self {
+            number,
+            current,
+            name,
+        }
+    }
+
     pub fn number(&self) -> ProfileNumber {
         self.number
     }
@@ -341,11 +392,9 @@ pub struct Response {
     bytes: Vec<u8>,
 }
 
-#[allow(dead_code)]
 impl Response {
-    /// The full raw bytes, including the response header.
-    pub fn raw(&self) -> &[u8] {
-        &self.bytes
+    fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
     }
 
     /// The payload bytes after the 5-byte response header.
@@ -410,7 +459,7 @@ impl Keyboard {
             )
         })?;
 
-        let keyboard = Keyboard {
+        let keyboard = Self {
             device,
             protocol,
             model,
@@ -418,7 +467,7 @@ impl Keyboard {
         Ok(keyboard)
     }
 
-    fn exchange(&self, packet: [u8; 8]) -> Result<Response> {
+    fn exchange(&self, packet: CommandPacket) -> Result<Response> {
         // Drain buffered stale input reports accumulated from previous commands
         // or invocations (e.g. repeated waybar polling leaves slot-probe timeouts
         // and profile-changed notifications in the kernel HID buffer).
@@ -426,7 +475,7 @@ impl Keyboard {
         while self
             .device
             .read_timeout(&mut drain_buf, 0)
-            .map_or(false, |n| n > 0)
+            .is_ok_and(|n| n > 0)
         {}
         self.device
             .send_feature_report(&packet)
@@ -435,7 +484,7 @@ impl Keyboard {
         // (e.g. a profile-changed event with cmd_echo = 0x0b) before responding to
         // our command.  Discard any such reports and retry until we see a response
         // whose cmd_echo matches what we sent, or until we time out (empty read).
-        let expected_cmd = packet[3];
+        let expected_cmd = packet.command_id();
         for _ in 0..HID_RESPONSE_RETRIES {
             let mut buffer = vec![0; self.protocol.response_size()];
             let bytes_read = self
@@ -444,7 +493,7 @@ impl Keyboard {
                 .context("HID read failed")?;
             buffer.truncate(bytes_read);
             if buffer.is_empty() || buffer.get(3).copied() == Some(expected_cmd) {
-                let response = Response { bytes: buffer };
+                let response = Response::new(buffer);
                 return Ok(response);
             }
         }
@@ -482,9 +531,7 @@ impl Keyboard {
             .get(runtime_offset)
             .copied()
             .context("GetCurrentKeyboardProfileIndex response too short")?;
-        let index = ProfileIndex {
-            slot: firmware_slot,
-        };
+        let index = ProfileIndex::new(firmware_slot);
         Ok(ProfileNumber::from(index))
     }
 
@@ -494,7 +541,7 @@ impl Keyboard {
     fn count_by_probe(&self) -> Result<u8> {
         let mut count: u8 = 0;
         for slot in 0..MAX_PROFILES {
-            let index = ProfileIndex { slot };
+            let index = ProfileIndex::new(slot);
             if self.profile_name(index).is_none() {
                 break;
             }
@@ -510,7 +557,7 @@ impl Keyboard {
     fn probe_profile_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for slot in 0..MAX_PROFILES {
-            let index = ProfileIndex { slot };
+            let index = ProfileIndex::new(slot);
             match self.profile_name(index) {
                 Some(name) => names.push(name),
                 None => break,
@@ -558,7 +605,7 @@ impl Keyboard {
                 let count = self.profile_count()?;
                 (0..count)
                     .map(|slot| {
-                        let index = ProfileIndex { slot };
+                        let index = ProfileIndex::new(slot);
                         self.profile_name(index).unwrap_or_default()
                     })
                     .collect()
@@ -567,16 +614,12 @@ impl Keyboard {
         let profiles = (0..MAX_PROFILES)
             .zip(names)
             .map(|(slot, name)| {
-                let index = ProfileIndex { slot };
+                let index = ProfileIndex::new(slot);
                 let number = ProfileNumber::from(index);
-                Profile {
-                    number,
-                    current: current == Some(number),
-                    name,
-                }
+                Profile::new(number, current == Some(number), name)
             })
             .collect();
-        let listing = ProfileListing { profiles, current };
+        let listing = ProfileListing::new(profiles, current);
         Ok(listing)
     }
 
@@ -589,11 +632,7 @@ impl Keyboard {
         self.send_for_profile(Command::ReloadProfile, index)?;
         let number = ProfileNumber::from(index);
         let name = self.profile_name(index).unwrap_or_default();
-        let switched = Profile {
-            number,
-            current: true,
-            name,
-        };
+        let switched = Profile::new(number, true, name);
         Ok(switched)
     }
 
@@ -792,11 +831,12 @@ mod tests {
     fn metadata_data(name: &str) -> Vec<u8> {
         let name_bytes = name.as_bytes();
         let name_len = u8::try_from(name_bytes.len()).expect("test name fits in u8");
-        let mut data = Vec::new();
-        data.push(name_len + 2); // payload_length: non-zero = slot occupied
-        data.push(0x00); // padding
-        data.push(METADATA_NAME_TAG); // 0x0A
-        data.push(name_len); // field length
+        let mut data = vec![
+            name_len + 2,      // payload_length: non-zero = slot occupied
+            0x00,              // padding
+            METADATA_NAME_TAG, // 0x0A
+            name_len,          // field length
+        ];
         data.extend_from_slice(name_bytes);
         data
     }
