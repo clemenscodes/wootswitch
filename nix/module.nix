@@ -11,7 +11,7 @@ in {
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.system}.wootswitch;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.wootswitch;
       defaultText = lib.literalExpression "inputs.wootswitch.packages.\${system}.wootswitch";
       description = "The wootswitch package to use.";
     };
